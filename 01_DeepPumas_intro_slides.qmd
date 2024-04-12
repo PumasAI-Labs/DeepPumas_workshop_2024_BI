@@ -1,0 +1,1175 @@
+---
+title: Scientific machine learning with DeepPumas
+execute:
+  error: false
+author:
+  - Niklas Korsbo
+date: today
+julia:
+  exeflags:
+    - '--project=..'
+logo: 'https://pumas-assets.s3.amazonaws.com/CompanyLogos/DeepPumas/RGB/SVG/DeepPumas+Primaryv.svg'
+format:
+  revealjs:
+    width: 1200
+    height: 800
+    auto-stretch: false
+    html-math-method: mathjax
+    transition: none
+    center: true
+    scrollable: false
+    progress: true
+    slide-number: true
+    smaller: false
+    theme: custom_moon.scss
+    css: style.css
+    mermaid:
+      theme: dark
+      flowchart:
+        htmlLabels: true
+    fig-align: center
+engine: julia 
+---
+
+# Introduction
+
+```{=html}
+<style>
+.MathJax {
+    font-size: 80% !important;
+}
+</style>
+```
+
+```{julia}
+#| warning: false
+#| output: false
+using DeepPumas
+using StableRNGs
+using PumasPlots
+using CairoMakie
+using Serialization
+using Latexify
+using Markdown
+set_theme!(deep_dark(); backgroundcolor=:transparent, fontsize=45)
+
+Latexify.set_default(starred=true, convert_unicode=false)
+```
+
+
+##
+
+
+![&nbsp;](image.png){width=50% align="center"}
+
+
+:::: {.columns style="font-size: 70%"}
+::: {.column width=0.4}
+Machine learning
+
+::: {.callout-tip appearance="minimal"}
+- Data-driven model discovery
+- Finds unintuitive relationships
+- Handles complex data
+:::
+
+::: {.callout-important appearance="minimal"}
+- Lacks scientific understanding
+- Requires big data
+- Inscrutible  
+:::
+:::
+  
+
+::: {.column width=0.4}
+Scientific modelling
+
+::: {.callout-tip appearance="minimal"}
+- Encodes scientific understanding
+- Data-efficient
+- Interpretable
+- Simple counterfactuals
+:::
+
+::: {.callout-important appearance="minimal"}
+- Labor intensive
+- Misses unintuitive relationships
+- Hard to utilize complex data
+:::
+:::
+::::
+  
+
+## {.center}
+![](image-3.png)
+
+##
+
+![](image-6.png)
+
+##
+
+![&nbsp;](image-7.png){width=70%}
+
+##
+
+![&nbsp;](image-1.png){width=70%}
+
+```{julia}
+#| output: false
+pkmodel = @model begin
+  @param begin
+    tvKa in RealDomain(; lower=0)
+    tvCL in RealDomain(; lower=0)
+    tvVc in RealDomain(; lower=0)
+    Ω in PDiagDomain(3)
+    σ in RealDomain(; lower=0)
+  end
+  @random η ~ MvNormal(Ω)
+  @pre begin
+    Ka = tvKa * exp(η[1])
+    CL = tvCL * exp(η[2])
+    Vc = tvVc * exp(η[3])
+  end
+  @dynamics Depots1Central1
+  @derived Concentration ~ @. Normal(Central/Vc, Central/Vc * σ)
+end
+
+param = (; tvKa = 2., tvCL=3., tvVc=1., Ω = [0.5, 0.5, 0.5], σ=0.1)
+rng = StableRNG(1)
+sims = map(1:20) do i 
+  _subj = Subject(; id=i, events = DosageRegimen(1, ii=1, addl=2))
+  sim = simobs(pkmodel, _subj, param; rng, obstimes = 0:0.2:4)
+end
+pop = Subject.(sims)
+```
+
+## {.smaller}
+
+:::: {.columns}
+
+::: {.column width="50%"}
+
+**[Nonlinear Mixed Effects]{.att}**
+
+::: {.fragment fragment-index=3 .fade-out}
+::: {.absolute top=300, right=10, width=600}
+
+```{julia}
+
+sim = (; label="Data", markersize=15, linewidth=1, color=(:white, 0.6),)
+plt = plotgrid(sims[1:1]; sim)
+```
+
+:::
+:::
+
+::: {.fragment fragment-index=3}
+
+::: {.absolute top=500, right=100, width="600"}
+
+```{julia}
+foreach(sims[2:4]) do _sim
+  plotgrid!(plt, [_sim]; sim)
+end
+plt
+```
+
+
+:::
+:::
+
+:::
+
+::: {.column width="50%"}
+
+
+::: {.fragment fragment-index=5}
+Typical values
+
+$$
+tvKa, \; tvCL, \; tvVc, \; Ω, \; σ
+$$
+
+Covariates
+$$
+Age, \; Weight
+$$
+
+Random effects
+
+$$
+η \sim MvNormal(Ω)
+$$
+
+:::
+  
+::: {.fragment fragment-index=4}
+Individual parameters
+
+\begin{align*}
+Ka_i &= tvKa \cdot e^{η_{i,1}} \\
+CL_i &= tvCL \cdot e^{η_{i,2}} \\
+Vc_i &= tvVc \cdot e^{η_{i,3}}
+\end{align*}
+:::
+
+::: {.fragment fragment-index=1}
+Dynamics
+
+```{julia}
+latexify(pkmodel, :dynamics)
+```
+
+:::
+::: {.fragment fragment-index=2}
+Error model
+$$
+Concentration(t) \sim Normal\left(\frac{Central(t)}{Vc}, \frac{Central(t)}{Vc} \cdot σ\right)
+$$
+:::
+
+
+
+
+:::
+::::
+
+---
+
+```{julia}
+#| output: false
+using Flux
+using CairoMakie
+using Colors
+
+ninput = 1
+nhidden = 6
+act=tanh
+
+opt = Adam()
+X = permutedims(collect(range(0, stop=1, length=301)))
+Ys = [X .^ 2 .+ X, 2 .* X ./ (0.3 .+ X), sin.(2π .* X) .+ 1, exp2.(X)]
+
+##
+nnf = Flux.Chain(Dense(1,nhidden, act), Dense(nhidden, nhidden, act), Dense(nhidden, 1))
+Ŷ = Observable(vec(Ys[end]))
+Y = Observable(vec(Ys[1]))
+
+fig, ax = lines(vec(X), Y; linewidth=6, axis=(ylabel="Output", xlabel="x"), label="f(x)", figure=(; resolution=(400,400), fontsize=25, backgroundcolor=colorant"#002b36"))
+lines!(vec(X), Ŷ, label="NN(x)", linewidth=6)
+Legend(fig[0,:], ax, orientation=:horizontal, framevisible=false)
+fig
+Ys = [X .^ 2 .+ X, 2 .* X ./ (0.3 .+ X), sin.(2π .* X) .+ 1, exp2.(X)]
+nframes = 400
+opt_state = Flux.setup(opt, nnf)
+record(fig, "nn_demo_test.mp4", 1:nframes; framerate=30) do frame
+  _Y = Ys[min(round(Int, frame ÷ (nframes/length(Ys))) + 1, end)]
+  Y[] = vec(_Y)
+  Ŷ[] = vec(nnf(X))
+  
+  steps_per_y = nframes / length(Ys)
+  
+  for j in 1:round(Int, 50 / steps_per_y * (frame%steps_per_y))
+  grads = gradient(m -> Flux.mse(m(X), _Y), nnf)
+    Flux.Optimise.update!(opt_state, nnf, grads[1])
+  end
+end 
+```
+
+## Neural networks {.smaller}
+
+:::: {.columns}
+::: {.column width="50%"}
+
+[Information processing mechanism]{.att}
+
+- Loosely based on neurons
+
+![&nbsp;](image-4.png){fig-align="center"}
+
+- Mathematically just a function!
+- Usable anywhere you'd use a function!
+
+:::
+::: {.column width="50%"}
+
+[Univeral approximators!]{.att}
+
+![](nn_demo_test.mp4){loop="true" autoplay="true" muted="true"}
+
+- Approximate *any* function
+- Functional form tuned by parameters
+
+:::
+::::
+
+## {.smaller}
+
+:::: {.columns}
+
+::: {.column width="50%"}
+
+**[Deep Nonlinear Mixed Effects]{.att}**
+
+::: {.absolute top=500, right=100, width="600"}
+
+```{julia}
+plt
+```
+
+
+:::
+:::
+
+::: {.column width="50%"}
+
+
+Typical values
+
+$$
+tvKa, \; tvCL, \; tvVc, \; Ω, \; σ
+$$
+
+Covariates
+$$
+Age, \; Weight
+$$
+
+Random effects
+
+$$
+η \sim MvNormal(Ω)
+$$
+
+  
+Individual parameters
+
+\begin{align*}
+Ka_i &= tvKa \cdot e^{η_{i,1}} \\
+CL_i &= tvCL \cdot e^{η_{i,2}} \\
+Vc_i &= tvVc \cdot e^{η_{i,3}}
+\end{align*}
+
+::: {.fragment}
+![](image-8.png){.absolute top=150 right=90 width=110}
+:::
+::: {.fragment}
+![](image-4.png){.absolute top=380 right=90 width=100}
+:::
+::: {.fragment}
+![](image-4.png){.absolute bottom=140 right=80 width=130}
+:::
+
+Dynamics
+
+```{julia}
+latexify(pkmodel, :dynamics)
+```
+
+Error model
+$$
+Concentration(t) \sim Normal\left(\frac{Central(t)}{Vc}, \frac{Central(t)}{Vc} \cdot σ\right)
+$$
+
+
+
+:::
+::::
+
+## Ok, all good? Crystal clear? That was a short workshop!
+
+::: {.fragment}
+Well...
+
+- What's this business of combining differential equations and ML?
+- What does random effects do and how do we train such a model?
+- How does random effects interact with machine learning?
+:::
+
+# Neural-embedded dynamical systems {.smaller}
+
+2018 - "Neural Ordinary Differential Equations", Chen et al.
+
+::: {.fragment fragment-index=1}
+2020 - "Universal Differential Equations for Scientific Machine Learning", Rackauckas et al.
+:::
+
+:::: {.columns}
+::: {.column width="33%"}
+
+[Neural ODE]{.att}
+
+$$
+\frac{d\mathbf{X}}{dt} = NN(\mathbf{X}(t), t)
+$$
+
+::: {style="font-size: 100%"}
+Use a differential equation solvers as a scaffold for continuous time, continuous depth neural networks. 
+
+Similar to recurrent neural networks and ResNets
+
+:::
+:::
+::: {.column width="33%"}
+
+::: {.fragment fragment-index=1}
+[Universal Differential Equations (UDE)]{.att}
+
+\begin{align*}
+\frac{dx}{dt} &= x \cdot y - NN(x)\\
+\frac{dy}{dt} &= p - x \cdot y
+\end{align*}
+
+Insert universal approximators (like NNs) to capture terms in dynamical systems. 
+:::
+
+:::
+::: {.column width="33%"}
+::: {.fragment fragment-index=2}
+
+[Scientific Machine Learning (SciML)]{.att}
+
+An abstract concept of mixing scientific modeling with machine learning. 
+
+:::
+:::
+::::
+
+## Encoded knowledge {.smaller}
+
+:::: {.columns}
+
+::: {.column width="50%"}
+
+[$$
+\begin{aligned}
+\frac{dDepot}{dt} &= NN(Depot, Central, R)[1]\\
+\frac{dCentral}{dt} &= NN(Depot, Central, R)[2]\\
+\frac{dR}{dt} &= NN(Depot, Central, R)[3]
+\end{aligned}
+$$]{.att}
+
+- Number of states
+
+::: {.fragment}
+
+[$$
+\begin{aligned}
+\frac{dDepot}{dt} &= - NN_1(Depot)\\
+\frac{dCentral}{dt} &= NN_1(Depot) - NN_2(Central)\\
+\frac{dR}{dt} &= NN_3(Central, R)
+\end{aligned}
+$$]{.att}
+
+- Number of states
+- Dependecies
+- Conservation
+
+:::
+:::
+
+::: {.column width="50%"}
+
+::: {.fragment}
+
+[$$
+\begin{aligned}
+\frac{dDepot}{dt} &= - K_a \cdot Depot\\
+\frac{dCentral}{dt} &= K_a \cdot Depot - CL/V_c \cdot Central\\
+\frac{dR}{dt} &= NN_3(Central, R)
+\end{aligned}
+$$]{.att}
+
+- Explicit knowledge of some terms
+
+:::
+  
+::: {.fragment}
+[$$
+\begin{aligned}
+\frac{dDepot}{dt} &= - K_a \cdot Depot\\
+\frac{dCentral}{dt} &= K_a \cdot Depot - CL/V_c \cdot Central\\
+\frac{dR}{dt} &= k_{in} \cdot (1 + NN(Central)) - k_{out} \cdot R
+\end{aligned}
+$$]{.att}
+
+- Precise position of the unknown function
+- Precise infor to the unknown input
+- Lots of knowledge!
+
+:::
+:::
+
+
+::::
+
+## UDEs - pretty simple, really {.smaller}
+
+
+![
+Mathematically: just a function!
+](image-4.png){fig-width="40%" fig-cap-alignment="center"}
+
+
+NNs useable anywhere you'd use a function!
+
+- Decide where in the dynamics you have an unknown function.
+- Decide what inputs this function may have.
+- Fit [everything]{.underline} in concert
+
+The only hard part is building software for robust fitting - but we've got you covered there!
+
+# Random effects and machine learning
+
+
+## Fitting with random effects
+[Their effect is largely determined by how they contribute to the loss function of a model fit]{style="font-size: 60%"}
+
+[Joint likelihood]{.att}
+
+Find fixed effects, θ and random effects, η that, given covariates x, and Data, maximize the likelihood $L$.
+
+[$$
+L(θ, η | Data, x)
+$$]{.att style="font-size=140%"}
+
+Maximizes the conditional probability that the data comes from the model $P(Data | θ, η, x)$.
+
+Essentially minimises a distance between predicted and observed values.
+
+## Fitting with random effects
+[Their effect is largely determined by how they contribute to the loss function of a model fit]{style="font-size: 60%"}
+
+[Marginal likelihood]{.att}
+
+Maginalize the random effects, weighted by its prior.
+
+[$$
+L_m(θ | Data, x) = \int L(θ, η | Data, x) P(η | θ) dη
+$$]{.att}
+
+Maximizes the weighted average probability for all possible random effect values. 
+
+Penalizes sensitivity to the precise random effect values.
+
+## Fitting with random effects
+
+```{julia}
+#| fig-cap: '&nbsp;'
+
+f(x; s=1, μ=0, σ=1) = @. s * exp(- (x-μ)^2/(2σ^2)) 
+p(x; σ = 1.1) = f(x; σ, s=1/(σ*sqrt(2π)))
+
+x = -3:0.01:3
+
+fig = Figure(; size=(1200, 1200), fontsize=25)
+ylabels=[L"p(Y|θ,η,x)", L"p_{p}(η|θ)", L"p(Y|θ,η,x) \cdot p_{p}(η|θ)"]
+axes = [Axis(fig[i,1], ylabel=ylabels[i]) for i in 1:3]
+_l1 = lines!(axes[1], x, f(x; s=0.7, μ=0.3, σ=0.3))
+_l2 = lines!(axes[1], x, f(x; s=0.9, μ=-1.5, σ=0.1))
+_l3 = lines!(axes[1], x, f(x; s=0.4, μ=1., σ=0.9))
+
+lines!(axes[2], x, p(x), color=(:white, 0.8))
+
+lines!(axes[3], x, p(x) .* f(x; s=0.7, μ=0.3, σ=0.3))
+band!(axes[3], x, 0, p(x) .* f(x; s=0.7, μ=0.3, σ=0.3))
+lines!(axes[3], x, p(x) .* f(x; s=0.9, μ=-1.5, σ=0.1))
+band!(axes[3], x, 0, p(x) .* f(x; s=0.9, μ=-1.5, σ=0.1), alpha=0.1)
+lines!(axes[3], x, p(x) .* f(x; s=0.4, μ=1., σ=0.9))
+band!(axes[3], x, 0, p(x) .* f(x; s=0.4, μ=1., σ=0.9), alpha=0.4)
+Label(fig[end+1, :], "η", tellwidth=false)
+Legend(fig[0,:], [_l1, _l2, _l3], ["Patient 1", "Patient 2", "Patient 3"], tellwidth=false, orientation=:horizontal)
+fig
+```
+
+## Marginal likelihood in reality
+
+$$
+L_m(θ | Data, x) = \int L(θ, η | Data, x) P(η | θ) dη
+$$
+
+Often intractable.
+
+Direct approximate maximization
+
+- Laplace, FOCE, FO
+- Bayesian MCMC
+
+Indirect maximization
+
+- Expectation maximization (EM)
+  - Stochastic appromimation (SAEM)
+  - Variational inference (VIEM)
+
+# Mixed effect machine learning
+
+
+```{julia}
+menet = @model begin
+  @param begin
+    NN ∈ MLPDomain(3, 7, 7, (1, identity); reg=L2())
+    σ ∈ RealDomain(; lower=0)
+  end
+  @random η ~ MvNormal(2, 0.1)
+  @derived Concentration ~ map(t) do _t
+    Normal(NN(_t, η)[1], σ)
+  end
+end
+pop_nodose = Subject.(pop; events=nothing)
+fpm = fit(menet, pop_nodose[1:14], init_params(menet), MAP(FOCE()); optim_options=(;iterations=1000, show_trace=false))
+plotgrid(predict(fpm, pop_nodose[15:end]; obstimes=0:0.01:4); figure = (; size = (1000,600), fontsize=25))
+```
+
+
+# Generate synthetic data
+
+## Defining synethetic data model {auto-animate="true"}
+
+```julia
+datamodel = @model begin
+    @dynamics begin
+        Depot' = -Ka * Depot
+        Central' = Ka * Depot - (CL / Vc) * Central
+        R' = Kin * (1 + EFF) - Kout * R
+    end
+end
+```
+
+## Defining synethetic data model {auto-animate="true"}
+```julia
+datamodel = @model begin
+    @vars begin
+        cp = abs(Central / Vc)
+        EFF = Smax * cp^n / (SC50^n + cp^n)
+    end
+    @dynamics begin
+        Depot' = -Ka * Depot
+        Central' = Ka * Depot - (CL / Vc) * Central
+        R' = Kin * (1 + EFF) - Kout * R
+    end
+end
+```
+
+
+## Defining synethetic data model {auto-animate="true"}
+```julia
+datamodel = @model begin
+    @vars begin
+        cp = abs(Central / Vc)
+        EFF = Smax * cp^n / (SC50^n + cp^n)
+    end
+    @dynamics begin
+        Depot' = -Ka * Depot
+        Central' = Ka * Depot - (CL / Vc) * Central
+        R' = Kin * (1 + EFF) - Kout * R
+    end
+    @derived begin
+        yPK ~ @. Normal(Central ./ Vc, σ_pk)
+        yPD ~ @. Normal(R, σ_pd)
+    end
+end
+```
+
+## Defining synethetic data model {auto-animate="true"}
+```julia
+datamodel = @model begin
+    @init R = Kin / Kout
+    @vars begin
+        cp = abs(Central / Vc)
+        EFF = Smax * cp^n / (SC50^n + cp^n)
+    end
+    @dynamics begin
+        Depot' = -Ka * Depot
+        Central' = Ka * Depot - (CL / Vc) * Central
+        R' = Kin * (1 + EFF) - Kout * R
+    end
+    @derived begin
+        yPK ~ @. Normal(Central ./ Vc, σ_pk)
+        yPD ~ @. Normal(R, σ_pd)
+    end
+end
+```
+
+## Defining synethetic data model {auto-animate="true"}
+```julia
+datamodel = @model begin 
+    @pre begin
+        Smax = tvSmax * exp(η[1]) + 3 * c1 / (10.0 + c1)
+        SC50 = tvSC50 * exp(η[2] + 0.3 * (c2 / 20)^0.75)
+        Ka = tvKa * exp(η[3] + 0.3 * c3 * c4)
+        Vc = tvVc * exp(η[4] + 0.3 * c3)
+        Kout = tvKout * exp(η[5] + 0.3 * c5 / (c6 + c5))
+        Kin = tvKin
+        CL = tvCL
+        n = tvn
+    end
+    @init R = Kin / Kout
+    @vars begin
+        cp = abs(Central / Vc)
+        EFF = Smax * cp^n / (SC50^n + cp^n)
+    end
+    @dynamics begin
+        Depot' = -Ka * Depot
+        Central' = Ka * Depot - (CL / Vc) * Central
+        R' = Kin * (1 + EFF) - Kout * R
+    end
+    @derived begin
+        yPK ~ @. Normal(Central ./ Vc, σ_pk)
+        yPD ~ @. Normal(R, σ_pd)
+    end
+end
+```
+
+## Defining synethetic data model {auto-animate="true"}
+```julia
+datamodel = @model begin 
+    @param begin
+        tvKa ∈ RealDomain(; lower = 0, init = 0.5)
+        tvCL ∈ RealDomain(; lower = 0)
+        tvVc ∈ RealDomain(; lower = 0)
+        tvSmax ∈ RealDomain(; lower = 0, init = 0.9)
+        tvn ∈ RealDomain(; lower = 0, init = 1.5)
+        tvSC50 ∈ RealDomain(; lower = 0, init = 0.1)
+        tvKout ∈ RealDomain(; lower = 0, init = 1.2)
+        tvKin ∈ RealDomain(; lower = 0, init = 1.2)
+        Ω ∈ PDiagDomain(; init = fill(0.05, 5))
+        σ_pk ∈ RealDomain(; lower = 0, init = 1e-1)
+        σ_pd ∈ RealDomain(; lower = 0, init = 1e-1)
+    end
+    @random η ~ MvNormal(Ω)
+    @covariates c1 c2 c3 c4 c5 c6
+    @pre begin
+        Smax = tvSmax * exp(η[1]) + 3 * c1 / (10.0 + c1)
+        SC50 = tvSC50 * exp(η[2] + 0.3 * (c2 / 20)^0.75)
+        Ka = tvKa * exp(η[3] + 0.3 * c3 * c4)
+        Vc = tvVc * exp(η[4] + 0.3 * c3)
+        Kout = tvKout * exp(η[5] + 0.3 * c5 / (c6 + c5))
+        Kin = tvKin
+        CL = tvCL
+        n = tvn
+    end
+    @init R = Kin / Kout
+    @vars begin
+        cp = abs(Central / Vc)
+        EFF = Smax * cp^n / (SC50^n + cp^n)
+    end
+    @dynamics begin
+        Depot' = -Ka * Depot
+        Central' = Ka * Depot - (CL / Vc) * Central
+        R' = Kin * (1 + EFF) - Kout * R
+    end
+    @derived begin
+        yPK ~ @. Normal(Central ./ Vc, σ_pk)
+        yPD ~ @. Normal(R, σ_pd)
+    end
+end
+```
+
+## Defining synethetic data model {auto-animate="true"}
+
+```{julia}
+#| echo: true
+#| output: false
+#| auto-animate: true
+
+datamodel = @model begin
+    @param begin
+        tvKa ∈ RealDomain(; lower = 0, init = 0.5)
+        tvCL ∈ RealDomain(; lower = 0)
+        tvVc ∈ RealDomain(; lower = 0)
+        tvSmax ∈ RealDomain(; lower = 0, init = 0.9)
+        tvn ∈ RealDomain(; lower = 0, init = 1.5)
+        tvSC50 ∈ RealDomain(; lower = 0, init = 0.1)
+        tvKout ∈ RealDomain(; lower = 0, init = 1.2)
+        tvKin ∈ RealDomain(; lower = 0, init = 1.2)
+        Ω ∈ PDiagDomain(; init = fill(0.05, 5))
+        σ_pk ∈ RealDomain(; lower = 0, init = 1e-1)
+        σ_pd ∈ RealDomain(; lower = 0, init = 1e-1)
+    end
+    @random η ~ MvNormal(Ω)
+    @covariates c1 c2 c3 c4 c5 c6
+    @pre begin
+        Smax = tvSmax * exp(η[1]) + 3 * c1 / (10.0 + c1)
+        SC50 = tvSC50 * exp(η[2] + 0.3 * (c2 / 20)^0.75)
+        Ka = tvKa * exp(η[3] + 0.3 * c3 * c4)
+        Vc = tvVc * exp(η[4] + 0.3 * c3)
+        Kout = tvKout * exp(η[5] + 0.3 * c5 / (c6 + c5))
+        Kin = tvKin
+        CL = tvCL
+        n = tvn
+    end
+    @init R = Kin / Kout
+    @vars begin
+        cp = abs(Central / Vc)
+        EFF = Smax * cp^n / (SC50^n + cp^n)
+    end
+    @dynamics begin
+        Depot' = -Ka * Depot
+        Central' = Ka * Depot - (CL / Vc) * Central
+        R' = Kin * (1 + EFF) - Kout * R
+    end
+    @derived begin
+        yPK ~ @. Normal(Central ./ Vc, σ_pk)
+        yPD ~ @. Normal(R, σ_pd)
+    end
+end
+```
+
+---
+
+The model syntax should make it fairly simple for the experienced NLME modeler to understand what is going on but we can also automatically generate even more readable equations from our models:
+
+```{julia}
+#| echo: true
+latexify(datamodel, :dynamics)
+```
+
+```{julia}
+---
+```
+
+## Synthetic data
+
+```{julia}
+#| output: false
+
+pop = synthetic_data(
+    datamodel,
+    DosageRegimen(2.0, ii = 4, addl = 1);
+    covariates = (;
+        c1 = Gamma(10, 1),
+        c2 = Gamma(21, 1),
+        c3 = Normal(),
+        c4 = Normal(),
+        c5 = Gamma(11, 1),
+        c6 = Gamma(11, 1),
+    ),
+    obstimes = 0:15,
+    nsubj = 1020,
+    rng = StableRNG(123),
+)
+
+## Split the data into different training/test populations
+trainpop_small = pop[1:80]
+trainpop_large = pop[1:1000]
+testpop = pop[length(trainpop_large)+1:end]
+
+## Visualize the synthetic data and the predictions of the data-generating model.
+pred_datamodel = predict(datamodel, testpop, init_params(datamodel); obstimes = 0:0.1:10);
+
+plotgrid(pred_datamodel[1:6]; observation = :yPK)
+plotgrid(pred_datamodel[1:6]; observation = :yPD)
+```
+
+```{julia}
+#| echo: false
+#| layout-ncol: 2
+#| fig-cap:
+#|   - 'Synthetic data of drug concentration over time, along with population (no random effects) predictions and individual predictions (random effects set to their empirival Bayes estimates) of the data-generating model.'
+#|   - The corresponding syntheticly generated pharmacodynamic outcome of interest.
+
+plotgrid(pred_datamodel[1:6]; observation = :yPK, figure = (; resolution = (500, 600))) |>
+display
+plotgrid(pred_datamodel[1:6]; observation = :yPD, figure = (; resolution = (500, 600)))
+```
+
+# Data-driven identification of model dynamics
+
+## What if we don't know everything?
+
+```{julia}
+#| output: false
+known_model_parts = @model begin
+    @param begin
+        tvKa ∈ RealDomain(; lower = 0, init = 0.5)
+        tvCL ∈ RealDomain(; lower = 0)
+        tvVc ∈ RealDomain(; lower = 0)
+        Ω ∈ PDiagDomain(2)
+        σ_pk ∈ RealDomain(; lower = 0, init = 1e-1)
+    end
+    @random begin
+        η ~ MvNormal(Ω)
+    end
+    @pre begin
+        Ka = tvKa * exp(η[1])
+        Vc = tvVc * exp(η[2])
+        CL = tvCL
+    end
+    @dynamics begin
+        Depot' = -Ka * Depot
+        Central' = Ka * Depot - (CL / Vc) * Central
+        # ???
+    end
+    @derived begin
+        yPK ~ @. Normal(Central ./ Vc, σ_pk)
+        # yPD ~ @. Normal(???, σ_pd)
+    end
+end
+```
+
+## 
+
+```{julia}
+#| output: false
+#| warning: false
+model = @model begin
+    @param begin
+        # PK parameters
+        tvKa ∈ RealDomain(; lower = 0)
+        tvCL ∈ RealDomain(; lower = 0)
+        tvVc ∈ RealDomain(; lower = 0)
+        Ω ∈ PSDDomain(3)
+        σ_pk ∈ RealDomain(; lower = 0, init = 10.0)
+
+        # PD parameters
+        ## Define a multi-layer perceptron (a neural network) which maps from 5 inputs (2
+        ## state variables + c individual parameters) to a single output. Apply L2
+        ## regularization (equivalent to a Normal prior).
+        NN ∈ MLPDomain(5, 6, 5, (1, identity); reg = L2(1.0))
+        tvR₀ ∈ RealDomain(; lower = 0)
+        Ω_nn ∈ PDiagDomain(; init = 0.1 .* I(2))
+        σ_pd ∈ RealDomain(; lower = 0, init = 10.0)
+    end
+    @random begin
+        η ~ MvNormal(Ω)
+        η_nn ~ MvNormal(Ω_nn)
+    end
+    @pre begin
+        Ka = tvKa * exp(η[1])
+        Vc = tvVc * exp(η[2])
+        CL = tvCL
+        R₀ = tvR₀ * exp(η[3])
+
+        # Fix individual parameters as static inputs to the NN and return an "individual"
+        # neural network:
+        iNN = fix(NN, R₀, η_nn)
+    end
+    @init begin
+        R = R₀
+    end
+    @dynamics begin
+        Depot' = -Ka * Depot
+        Central' = Ka * Depot - (CL / Vc) * Central
+        R' = iNN(Central, R)[1]
+    end
+    @derived begin
+        yPK ~ @. Normal(Central / Vc, σ_pk)
+        yPD ~ @. Normal(R, σ_pd)
+    end
+end
+```
+
+::: {.callout-note collapse=true}
+
+## Why did we use a diagonal, standard, multivariate normal for the neural network random effects?
+
+When we feed random effects, $η$, directly as input to a neural network, the neural network will be capable of transforming that $η$ as needed. The prior distribution of the $η$ thus matters rather little for the ability of the model to fit the data. However, the choice still has two main impacts.
+
+ 1. Neural networks are easier to fit if the inputs are standardized. In machine learning, we frequently use z-score standardization to transform input such that it has mean 0 and std 1. This is done to reduce the risk of the first neural network layer ending up with either too high or too low values for their activation function. There's typically a sweet spot where the input is not too far from the nonlinear bits and where it is not saturating the activation function. So, all else being equal, let's just pick a prior distribution of the random effects that makes fitting easier.
+ 2. Using a diagonal covariance matrix means that covariance of the random effects are penalized. Covarying ηs are more likely to end up far from the mean of a multivariate normal and this incurs a cost during fitting. Using a random effect prior without covariance incentivises the fitting procedure to find an orthogonal parameterization of the function that the neural netork ends up assuming. This makes life a bit easier for us in that it makes model interpretation and analysis easier and it makes it easier to find a covariate model that maps to the posterior distribution of the ηs.
+
+:::
+
+```{julia}
+#| output: false
+#| warning: false
+
+fpm = fit(
+    model,
+    trainpop_small,
+    init_params(model),
+    MAP(FOCE());
+    # Some extra options to speed up the tutorial at the expense of a little accuracy:
+    optim_options = (; iterations = 200, show_every = 10),
+);
+```
+
+::: {.callout-note collapse=true}
+
+## Why did we use `MAP`?
+
+We use maximum aposteriori (`MAP`) fitting when we want to include priors on our fixed effects. The parameters (weights and biases) of our neural networks are all just fixed effects of the NLME model and their `L1` or `L2` regularization are priors. Without `MAP`, we would thus not regularize our neural network.
+:::
+
+::: {.callout-note collapse=true}
+
+## Why did we use `FOCE` to maximize the _marginal_ likelihood?
+
+We fit the model by maximizing (an approximation of) the **marginal** likelihood and this is _very_ important for the generalizability of our fitted model. The marginal likelihood, $L_m$, marginalizes out the random effects and thus essentially represents a score of how well the model fits on average, across all values of the random effects that we might expect given the random effect priors.
+
+$$
+L_m(θ, z) = \int L_c(θ, z | η) \cdot p_η(η | θ) dη
+$$
+
+Had we, instead, maximized the _conditional_ likelihood, $L_c$, or the conditional maximum aposteriori then we would have allowed a large degree of independence η values across subjects, making overfitting rather likely. The marginal likelihood penalizes overfitting since an overfitted $L_c$ would be sensitive to the precise input of $η$ and would thus have a very small base of the area-under-the-curve that we're using when computing the marginal likelihood. Marginal likelihood embeds a measure of robustness towards perturbations.
+
+`FOCE` is method for approximating the marginal likelihood without having to evaluate this whole integral. It makes assupmtions that may be dubious but it still yields good results across a wide range of models (including most DeepPumas models we've tried). We DeepPumas scientists default to it as a matter of pragmatism and only depart from it in the rare cases where the model fit does not succeed with delivering anything that predicts and behaves well.
+
+:::
+
+The model has succeeded in discovering the dynamical model if the population and individual predictions match the data well.
+
+```{julia}
+#| fig-cap: 'From a small training population, we''ve fitted the model, neural network and all. The ipreds (which use the empirical bayes estimates for the subjects'' random effect) match the data just about perfectly. The "preds" (which uses the mode of the random effect prior) are all identical since we have no distinguishing information between our patients such as different covariates or different dosing. The preds thus, accurately, find some population average behaviour.'
+
+pred = predict(fpm, testpop; obstimes = 0:0.1:10);
+plotgrid(pred; observation = :yPD)
+```
+
+# Augumenting with machine learning to capture covariate information
+
+So far, we have fitted a covariate-free model that has proven flexible enough to capture the dyamics displayed in the data. It also captured inter-individual variability but it did not use any covariates to explain and predict some of that variability. But, if there is a way to predict the values of a patient's empirical bayes estimates from their baseline covariates then we would have improved our ability to make longitudinal predictions.
+There is a simple way of extracting the relevant covariate $\to$ random effect values mapping that would enable machine learning based covariate modeling:
+
+```{julia}
+preprocess(fpm)
+```
+
+However, using this target would have resulted in rather small improvement that's strikingly obvious enough for our demonstration. This is because different aspects of model fitting have different requirements of the data in order to robustly separate signal from noise. One might think that a neural network inserted into a dynamical system would be harder to fit than a neural network that just maps from a vector of covariates to a vector of targets but that is not always the case. During fitting of the dyanamical system, every timepoint for every patient is a datapoint that can inform the model fit. However, when we're fitting a covariate model, we try to find time-independent features of a patient. The number of observations over time that we have for that patient does not affect the total number of datapoints we can utilize to discover the covariate mapping. To find a good, individualizable, dynamical model, we did not need more than 80 patients - and, indeed, we might have done well with less than 10. But, to find an accurate nonlinear relationship between covariates and individual outcomes, we'll need data from more patients.
+
+We, thus create a target mapping from `trainpop_large`, a population of $1,000$ patients.
+
+```{julia}
+#| output: false
+target = preprocess(model, trainpop_large, coef(fpm), FOCE())
+```
+
+We then define a machine learning model to model that relationship, fit that model, and augment the original NLME model with the fitted covariate model.
+
+```{julia}
+nn = MLPDomain(numinputs(target), 10, 10, (numoutputs(target), identity); reg = L2())
+ho = hyperopt(nn, target)
+augmented_fpm = augment(fpm, ho);
+```
+
+Since some of the inter-individual variability in the data-generating model came from random effects, there is _no way_ of perfectly predicting the patient outcomes from the covariates. The best we can do is if our augmented model makes the same prediction as the data-generating model does when applied to validation data. That would indicate that we have identified the true relationship between the covariates and the patients' longitudinal outcomes.
+
+```{julia}
+#| fig-cap: 'The DeepPumas model''s t=0 predictive performance on test data indicates that we have, indeed, found both the correct dynamical system and the correct relationship between the patient covariates and their individual parameters (and thus their individual longitudinal outcomes).'
+pred_augment = predict(augmented_fpm, testpop; obstimes = 0:0.1:10)
+plotgrid(pred_augment; ipred = false, observation = :yPD)
+plotgrid!(
+    pred_datamodel,
+    ipred = false,
+    pred = (;
+        label = "Best possible pred",
+        color = :black,
+        linestyle = :dash,
+        linewidth = 2,
+    ),
+    observation = :yPD,
+)
+```
+
+Here, we first captured all inter-individual variability with random effects from which we generated a target for further machine learning fitting. In this example, we had a few nonlinear numerical covariates that we then, essentially, mapped onto every patient's empirical bayes estimates. Note however that this process happened outside of the NLME model and that all we did was to find a machine learning model that mapped from an input to a target consisting of a vector of numbers. We used numbers but, really, any covariate would work - images, omics, anything you have. You'd just have to find a machine learning model that can appropriately map from that covariate input to a vector of numerical outputs.
+
+```{julia}
+testpop2 = synthetic_data(
+    datamodel,
+    DosageRegimen(
+        DosageRegimen(1.0, ii = 2, addl = 1),
+        DosageRegimen(0.4; ii = 2, addl = 1, time = 8),
+    );
+    covariates = (;
+        # R_eq = Gamma(5e2, 1/(5e2)), 
+        c1 = Gamma(10, 1),
+        c2 = Gamma(21, 1),
+        c3 = Normal(),
+        c4 = Normal(),
+        c5 = Gamma(11, 1),
+        c6 = Gamma(11, 1),
+    ),
+    obstimes = 0:15,
+    nsubj = 12,
+    rng = StableRNG(123),
+)
+
+plotgrid(testpop2)
+
+pred2 = predict(augmented_fpm, testpop2; obstimes = 0:0.1:15)
+pred2_truth = predict(datamodel, testpop2, init_params(datamodel); obstimes = 0:0.1:15)
+
+plotgrid(pred2, observation = :yPD)
+plotgrid!(
+    pred2_truth,
+    ipred = false,
+    pred = (;
+        label = "Best possible pred",
+        color = :black,
+        linestyle = :dash,
+        linewidth = 2,
+    ),
+    observation = :yPD,
+)
+```
+
+# Refitting the prior random effect distribution
+
+We have now augmented our NLME model to capture some of the inter-individual variability from patient covariates rather than with random effects. It would therefore be a good idea to re-fit the Omegas that control the prior distribution of the random effects. Typically, this prior would no longer need to be quite as broad as it was before the covariate model augmentation.
+
+```{julia}
+#| output: false
+#| warning: false
+fpm_refit_Ω = fit(
+    augmented_fpm.model,
+    trainpop_small,
+    coef(augmented_fpm),
+    MAP(FOCE());
+    # Fit only the Ω parameters
+    constantcoef = Base.structdiff(coef(augmented_fpm), (; Ω = 1, Ω_nn = 1)),
+);
+```
+
+```{julia}
+#| warning: false
+ins_refit_Ω = inspect(fpm_refit_Ω)
+goodness_of_fit(ins_refit_Ω; figure = (; resolution = (700, 1500)))
+```
+
+```{julia}
+_vpc = vpc(fpm_refit_Ω)
+vpc_plot(_vpc)
+```
+
+# Fully joint modeling
+
+Above, we see a highly successful sequential approach to model fitting. We first fit a model that's able to capture the dynamics and individual variability across our dataset. We then fit a covariate model that is able to personalize baseline predictions based on patient characteristics. We finally merge the two sequentially fitted models.
+
+The sequential approach is typically so good that we don't need to, but we _can_ go further and fit the entire combined model jointly. This could either be done from scratch, with the covariate model inserted right at the initial definition of the NLME model. Or, more effectively, it can be done to fine-tune a sequential fit.
+
+Now, however, we have quite a lot of parameters in the NLME model and fitting would take a bit of time.
+
+```{julia}
+fpm_deep = fit(
+    fpm_refit_Ω.model,
+    trainpop_large,
+    coef(fpm_refit_Ω),
+    MAP(FOCE());
+    # Waiting for completion would be a bit dull so let's constrain the fit.
+    optim_options = (; time_limit = 5 * 60),
+);
+```
+
+In this case, the benefits of joint fitting was rather negligible since we both terminated the fit early and we started from the sequentially fitted results which was already very good.
+
+```{julia}
+pred2_joint = predict(fpm_deep, testpop2; obstimes = 0:0.1:15)
+plotgrid(pred2_joint; observation = :yPD)
+plotgrid!(
+    pred2_truth,
+    ipred = false,
+    pred = (;
+        label = "Best possible pred",
+        color = :black,
+        linestyle = :dash,
+        linewidth = 2,
+    ),
+    observation = :yPD,
+)
+```
+
+# Conclusion
+
+DeepPumas enables flexible and nested composition of dynamical, statistical and machine learning modelling. It can be used to automatically identify missing dynamical elements in a data-driven way, and those elements can then be used to predict hetereogeneous outcomes across different individuals. Furthermore, the DeepPumas can correctly identify the relationship between baseline covariates and patient parameters to make longitudinal outcome predictions. With imperfect signal in our data, no model can perfectly predict the future, but the DeepPumas model here made the best possible predictions - matching those of the data-generating model.
+
