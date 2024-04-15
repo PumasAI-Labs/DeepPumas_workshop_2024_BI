@@ -2,6 +2,7 @@
 title: Scientific machine learning with DeepPumas
 execute:
   error: false
+  cache: true
 author:
   - Niklas Korsbo
 date: today
@@ -51,6 +52,7 @@ using CairoMakie
 using Serialization
 using Latexify
 using Markdown
+using QuartoTools
 set_theme!(deep_dark(); backgroundcolor=:transparent, fontsize=45)
 
 Latexify.set_default(starred=true, convert_unicode=false)
@@ -76,7 +78,7 @@ Machine learning
 ::: {.callout-important appearance="minimal"}
 - Lacks scientific understanding
 - Requires big data
-- Inscrutible  
+- Inscrutable  
 :::
 :::
   
@@ -218,6 +220,7 @@ Vc_i &= tvVc \cdot e^{η_{i,3}}
 Dynamics
 
 ```{julia}
+#| output: asis
 latexify(pkmodel, :dynamics)
 ```
 
@@ -442,25 +445,29 @@ An abstract concept of mixing scientific modeling with machine learning.
 
 ::: {.column width="50%"}
 
-[$$
+::: {.att}
+$$
 \begin{aligned}
 \frac{dDepot}{dt} &= NN(Depot, Central, R)[1]\\
 \frac{dCentral}{dt} &= NN(Depot, Central, R)[2]\\
 \frac{dR}{dt} &= NN(Depot, Central, R)[3]
 \end{aligned}
-$$]{.att}
+$$
+:::
 
 - Number of states
 
 ::: {.fragment}
 
-[$$
+::: {.att}
+$$
 \begin{aligned}
 \frac{dDepot}{dt} &= - NN_1(Depot)\\
 \frac{dCentral}{dt} &= NN_1(Depot) - NN_2(Central)\\
 \frac{dR}{dt} &= NN_3(Central, R)
 \end{aligned}
-$$]{.att}
+$$
+:::
 
 - Number of states
 - Dependecies
@@ -473,26 +480,30 @@ $$]{.att}
 
 ::: {.fragment}
 
-[$$
+::: {.att}
+$$
 \begin{aligned}
 \frac{dDepot}{dt} &= - K_a \cdot Depot\\
 \frac{dCentral}{dt} &= K_a \cdot Depot - CL/V_c \cdot Central\\
 \frac{dR}{dt} &= NN_3(Central, R)
 \end{aligned}
-$$]{.att}
+$$
+:::
 
 - Explicit knowledge of some terms
 
 :::
   
 ::: {.fragment}
-[$$
+[
+$$
 \begin{aligned}
 \frac{dDepot}{dt} &= - K_a \cdot Depot\\
 \frac{dCentral}{dt} &= K_a \cdot Depot - CL/V_c \cdot Central\\
 \frac{dR}{dt} &= k_{in} \cdot (1 + NN(Central)) - k_{out} \cdot R
 \end{aligned}
-$$]{.att}
+$$
+]{.att}
 
 - Precise position of the unknown function
 - Precise infor to the unknown input
@@ -530,9 +541,11 @@ The only hard part is building software for robust fitting - but we've got you c
 
 Find fixed effects, θ and random effects, η that, given covariates x, and Data, maximize the likelihood $L$.
 
-[$$
+[
+$$
 L(θ, η | Data, x)
-$$]{.att style="font-size=140%"}
+$$
+]{.att style="font-size=140%"}
 
 Maximizes the conditional probability that the data comes from the model $P(Data | θ, η, x)$.
 
@@ -545,9 +558,11 @@ Essentially minimises a distance between predicted and observed values.
 
 Maginalize the random effects, weighted by its prior.
 
-[$$
+[
+$$
 L_m(θ | Data, x) = \int L(θ, η | Data, x) P(η | θ) dη
-$$]{.att}
+$$
+]{.att}
 
 Maximizes the weighted average probability for all possible random effect values. 
 
@@ -640,7 +655,7 @@ end
 ```julia
 datamodel = @model begin
     @vars begin
-        cp = abs(Central / Vc)
+cp = abs(Central / Vc)
         EFF = Smax * cp^n / (SC50^n + cp^n)
     end
     @dynamics begin
@@ -670,6 +685,7 @@ datamodel = @model begin
     end
 end
 ```
+
 
 ## Defining synethetic data model {auto-animate="true"}
 ```julia
@@ -824,352 +840,3 @@ The model syntax should make it fairly simple for the experienced NLME modeler t
 #| echo: true
 latexify(datamodel, :dynamics)
 ```
-
-```{julia}
----
-```
-
-## Synthetic data
-
-```{julia}
-#| output: false
-
-pop = synthetic_data(
-    datamodel,
-    DosageRegimen(2.0, ii = 4, addl = 1);
-    covariates = (;
-        c1 = Gamma(10, 1),
-        c2 = Gamma(21, 1),
-        c3 = Normal(),
-        c4 = Normal(),
-        c5 = Gamma(11, 1),
-        c6 = Gamma(11, 1),
-    ),
-    obstimes = 0:15,
-    nsubj = 1020,
-    rng = StableRNG(123),
-)
-
-## Split the data into different training/test populations
-trainpop_small = pop[1:80]
-trainpop_large = pop[1:1000]
-testpop = pop[length(trainpop_large)+1:end]
-
-## Visualize the synthetic data and the predictions of the data-generating model.
-pred_datamodel = predict(datamodel, testpop, init_params(datamodel); obstimes = 0:0.1:10);
-
-plotgrid(pred_datamodel[1:6]; observation = :yPK)
-plotgrid(pred_datamodel[1:6]; observation = :yPD)
-```
-
-```{julia}
-#| echo: false
-#| layout-ncol: 2
-#| fig-cap:
-#|   - 'Synthetic data of drug concentration over time, along with population (no random effects) predictions and individual predictions (random effects set to their empirival Bayes estimates) of the data-generating model.'
-#|   - The corresponding syntheticly generated pharmacodynamic outcome of interest.
-
-plotgrid(pred_datamodel[1:6]; observation = :yPK, figure = (; resolution = (500, 600))) |>
-display
-plotgrid(pred_datamodel[1:6]; observation = :yPD, figure = (; resolution = (500, 600)))
-```
-
-# Data-driven identification of model dynamics
-
-## What if we don't know everything?
-
-```{julia}
-#| output: false
-known_model_parts = @model begin
-    @param begin
-        tvKa ∈ RealDomain(; lower = 0, init = 0.5)
-        tvCL ∈ RealDomain(; lower = 0)
-        tvVc ∈ RealDomain(; lower = 0)
-        Ω ∈ PDiagDomain(2)
-        σ_pk ∈ RealDomain(; lower = 0, init = 1e-1)
-    end
-    @random begin
-        η ~ MvNormal(Ω)
-    end
-    @pre begin
-        Ka = tvKa * exp(η[1])
-        Vc = tvVc * exp(η[2])
-        CL = tvCL
-    end
-    @dynamics begin
-        Depot' = -Ka * Depot
-        Central' = Ka * Depot - (CL / Vc) * Central
-        # ???
-    end
-    @derived begin
-        yPK ~ @. Normal(Central ./ Vc, σ_pk)
-        # yPD ~ @. Normal(???, σ_pd)
-    end
-end
-```
-
-## 
-
-```{julia}
-#| output: false
-#| warning: false
-model = @model begin
-    @param begin
-        # PK parameters
-        tvKa ∈ RealDomain(; lower = 0)
-        tvCL ∈ RealDomain(; lower = 0)
-        tvVc ∈ RealDomain(; lower = 0)
-        Ω ∈ PSDDomain(3)
-        σ_pk ∈ RealDomain(; lower = 0, init = 10.0)
-
-        # PD parameters
-        ## Define a multi-layer perceptron (a neural network) which maps from 5 inputs (2
-        ## state variables + c individual parameters) to a single output. Apply L2
-        ## regularization (equivalent to a Normal prior).
-        NN ∈ MLPDomain(5, 6, 5, (1, identity); reg = L2(1.0))
-        tvR₀ ∈ RealDomain(; lower = 0)
-        Ω_nn ∈ PDiagDomain(; init = 0.1 .* I(2))
-        σ_pd ∈ RealDomain(; lower = 0, init = 10.0)
-    end
-    @random begin
-        η ~ MvNormal(Ω)
-        η_nn ~ MvNormal(Ω_nn)
-    end
-    @pre begin
-        Ka = tvKa * exp(η[1])
-        Vc = tvVc * exp(η[2])
-        CL = tvCL
-        R₀ = tvR₀ * exp(η[3])
-
-        # Fix individual parameters as static inputs to the NN and return an "individual"
-        # neural network:
-        iNN = fix(NN, R₀, η_nn)
-    end
-    @init begin
-        R = R₀
-    end
-    @dynamics begin
-        Depot' = -Ka * Depot
-        Central' = Ka * Depot - (CL / Vc) * Central
-        R' = iNN(Central, R)[1]
-    end
-    @derived begin
-        yPK ~ @. Normal(Central / Vc, σ_pk)
-        yPD ~ @. Normal(R, σ_pd)
-    end
-end
-```
-
-::: {.callout-note collapse=true}
-
-## Why did we use a diagonal, standard, multivariate normal for the neural network random effects?
-
-When we feed random effects, $η$, directly as input to a neural network, the neural network will be capable of transforming that $η$ as needed. The prior distribution of the $η$ thus matters rather little for the ability of the model to fit the data. However, the choice still has two main impacts.
-
- 1. Neural networks are easier to fit if the inputs are standardized. In machine learning, we frequently use z-score standardization to transform input such that it has mean 0 and std 1. This is done to reduce the risk of the first neural network layer ending up with either too high or too low values for their activation function. There's typically a sweet spot where the input is not too far from the nonlinear bits and where it is not saturating the activation function. So, all else being equal, let's just pick a prior distribution of the random effects that makes fitting easier.
- 2. Using a diagonal covariance matrix means that covariance of the random effects are penalized. Covarying ηs are more likely to end up far from the mean of a multivariate normal and this incurs a cost during fitting. Using a random effect prior without covariance incentivises the fitting procedure to find an orthogonal parameterization of the function that the neural netork ends up assuming. This makes life a bit easier for us in that it makes model interpretation and analysis easier and it makes it easier to find a covariate model that maps to the posterior distribution of the ηs.
-
-:::
-
-```{julia}
-#| output: false
-#| warning: false
-
-fpm = fit(
-    model,
-    trainpop_small,
-    init_params(model),
-    MAP(FOCE());
-    # Some extra options to speed up the tutorial at the expense of a little accuracy:
-    optim_options = (; iterations = 200, show_every = 10),
-);
-```
-
-::: {.callout-note collapse=true}
-
-## Why did we use `MAP`?
-
-We use maximum aposteriori (`MAP`) fitting when we want to include priors on our fixed effects. The parameters (weights and biases) of our neural networks are all just fixed effects of the NLME model and their `L1` or `L2` regularization are priors. Without `MAP`, we would thus not regularize our neural network.
-:::
-
-::: {.callout-note collapse=true}
-
-## Why did we use `FOCE` to maximize the _marginal_ likelihood?
-
-We fit the model by maximizing (an approximation of) the **marginal** likelihood and this is _very_ important for the generalizability of our fitted model. The marginal likelihood, $L_m$, marginalizes out the random effects and thus essentially represents a score of how well the model fits on average, across all values of the random effects that we might expect given the random effect priors.
-
-$$
-L_m(θ, z) = \int L_c(θ, z | η) \cdot p_η(η | θ) dη
-$$
-
-Had we, instead, maximized the _conditional_ likelihood, $L_c$, or the conditional maximum aposteriori then we would have allowed a large degree of independence η values across subjects, making overfitting rather likely. The marginal likelihood penalizes overfitting since an overfitted $L_c$ would be sensitive to the precise input of $η$ and would thus have a very small base of the area-under-the-curve that we're using when computing the marginal likelihood. Marginal likelihood embeds a measure of robustness towards perturbations.
-
-`FOCE` is method for approximating the marginal likelihood without having to evaluate this whole integral. It makes assupmtions that may be dubious but it still yields good results across a wide range of models (including most DeepPumas models we've tried). We DeepPumas scientists default to it as a matter of pragmatism and only depart from it in the rare cases where the model fit does not succeed with delivering anything that predicts and behaves well.
-
-:::
-
-The model has succeeded in discovering the dynamical model if the population and individual predictions match the data well.
-
-```{julia}
-#| fig-cap: 'From a small training population, we''ve fitted the model, neural network and all. The ipreds (which use the empirical bayes estimates for the subjects'' random effect) match the data just about perfectly. The "preds" (which uses the mode of the random effect prior) are all identical since we have no distinguishing information between our patients such as different covariates or different dosing. The preds thus, accurately, find some population average behaviour.'
-
-pred = predict(fpm, testpop; obstimes = 0:0.1:10);
-plotgrid(pred; observation = :yPD)
-```
-
-# Augumenting with machine learning to capture covariate information
-
-So far, we have fitted a covariate-free model that has proven flexible enough to capture the dyamics displayed in the data. It also captured inter-individual variability but it did not use any covariates to explain and predict some of that variability. But, if there is a way to predict the values of a patient's empirical bayes estimates from their baseline covariates then we would have improved our ability to make longitudinal predictions.
-There is a simple way of extracting the relevant covariate $\to$ random effect values mapping that would enable machine learning based covariate modeling:
-
-```{julia}
-preprocess(fpm)
-```
-
-However, using this target would have resulted in rather small improvement that's strikingly obvious enough for our demonstration. This is because different aspects of model fitting have different requirements of the data in order to robustly separate signal from noise. One might think that a neural network inserted into a dynamical system would be harder to fit than a neural network that just maps from a vector of covariates to a vector of targets but that is not always the case. During fitting of the dyanamical system, every timepoint for every patient is a datapoint that can inform the model fit. However, when we're fitting a covariate model, we try to find time-independent features of a patient. The number of observations over time that we have for that patient does not affect the total number of datapoints we can utilize to discover the covariate mapping. To find a good, individualizable, dynamical model, we did not need more than 80 patients - and, indeed, we might have done well with less than 10. But, to find an accurate nonlinear relationship between covariates and individual outcomes, we'll need data from more patients.
-
-We, thus create a target mapping from `trainpop_large`, a population of $1,000$ patients.
-
-```{julia}
-#| output: false
-target = preprocess(model, trainpop_large, coef(fpm), FOCE())
-```
-
-We then define a machine learning model to model that relationship, fit that model, and augment the original NLME model with the fitted covariate model.
-
-```{julia}
-nn = MLPDomain(numinputs(target), 10, 10, (numoutputs(target), identity); reg = L2())
-ho = hyperopt(nn, target)
-augmented_fpm = augment(fpm, ho);
-```
-
-Since some of the inter-individual variability in the data-generating model came from random effects, there is _no way_ of perfectly predicting the patient outcomes from the covariates. The best we can do is if our augmented model makes the same prediction as the data-generating model does when applied to validation data. That would indicate that we have identified the true relationship between the covariates and the patients' longitudinal outcomes.
-
-```{julia}
-#| fig-cap: 'The DeepPumas model''s t=0 predictive performance on test data indicates that we have, indeed, found both the correct dynamical system and the correct relationship between the patient covariates and their individual parameters (and thus their individual longitudinal outcomes).'
-pred_augment = predict(augmented_fpm, testpop; obstimes = 0:0.1:10)
-plotgrid(pred_augment; ipred = false, observation = :yPD)
-plotgrid!(
-    pred_datamodel,
-    ipred = false,
-    pred = (;
-        label = "Best possible pred",
-        color = :black,
-        linestyle = :dash,
-        linewidth = 2,
-    ),
-    observation = :yPD,
-)
-```
-
-Here, we first captured all inter-individual variability with random effects from which we generated a target for further machine learning fitting. In this example, we had a few nonlinear numerical covariates that we then, essentially, mapped onto every patient's empirical bayes estimates. Note however that this process happened outside of the NLME model and that all we did was to find a machine learning model that mapped from an input to a target consisting of a vector of numbers. We used numbers but, really, any covariate would work - images, omics, anything you have. You'd just have to find a machine learning model that can appropriately map from that covariate input to a vector of numerical outputs.
-
-```{julia}
-testpop2 = synthetic_data(
-    datamodel,
-    DosageRegimen(
-        DosageRegimen(1.0, ii = 2, addl = 1),
-        DosageRegimen(0.4; ii = 2, addl = 1, time = 8),
-    );
-    covariates = (;
-        # R_eq = Gamma(5e2, 1/(5e2)), 
-        c1 = Gamma(10, 1),
-        c2 = Gamma(21, 1),
-        c3 = Normal(),
-        c4 = Normal(),
-        c5 = Gamma(11, 1),
-        c6 = Gamma(11, 1),
-    ),
-    obstimes = 0:15,
-    nsubj = 12,
-    rng = StableRNG(123),
-)
-
-plotgrid(testpop2)
-
-pred2 = predict(augmented_fpm, testpop2; obstimes = 0:0.1:15)
-pred2_truth = predict(datamodel, testpop2, init_params(datamodel); obstimes = 0:0.1:15)
-
-plotgrid(pred2, observation = :yPD)
-plotgrid!(
-    pred2_truth,
-    ipred = false,
-    pred = (;
-        label = "Best possible pred",
-        color = :black,
-        linestyle = :dash,
-        linewidth = 2,
-    ),
-    observation = :yPD,
-)
-```
-
-# Refitting the prior random effect distribution
-
-We have now augmented our NLME model to capture some of the inter-individual variability from patient covariates rather than with random effects. It would therefore be a good idea to re-fit the Omegas that control the prior distribution of the random effects. Typically, this prior would no longer need to be quite as broad as it was before the covariate model augmentation.
-
-```{julia}
-#| output: false
-#| warning: false
-fpm_refit_Ω = fit(
-    augmented_fpm.model,
-    trainpop_small,
-    coef(augmented_fpm),
-    MAP(FOCE());
-    # Fit only the Ω parameters
-    constantcoef = Base.structdiff(coef(augmented_fpm), (; Ω = 1, Ω_nn = 1)),
-);
-```
-
-```{julia}
-#| warning: false
-ins_refit_Ω = inspect(fpm_refit_Ω)
-goodness_of_fit(ins_refit_Ω; figure = (; resolution = (700, 1500)))
-```
-
-```{julia}
-_vpc = vpc(fpm_refit_Ω)
-vpc_plot(_vpc)
-```
-
-# Fully joint modeling
-
-Above, we see a highly successful sequential approach to model fitting. We first fit a model that's able to capture the dynamics and individual variability across our dataset. We then fit a covariate model that is able to personalize baseline predictions based on patient characteristics. We finally merge the two sequentially fitted models.
-
-The sequential approach is typically so good that we don't need to, but we _can_ go further and fit the entire combined model jointly. This could either be done from scratch, with the covariate model inserted right at the initial definition of the NLME model. Or, more effectively, it can be done to fine-tune a sequential fit.
-
-Now, however, we have quite a lot of parameters in the NLME model and fitting would take a bit of time.
-
-```{julia}
-fpm_deep = fit(
-    fpm_refit_Ω.model,
-    trainpop_large,
-    coef(fpm_refit_Ω),
-    MAP(FOCE());
-    # Waiting for completion would be a bit dull so let's constrain the fit.
-    optim_options = (; time_limit = 5 * 60),
-);
-```
-
-In this case, the benefits of joint fitting was rather negligible since we both terminated the fit early and we started from the sequentially fitted results which was already very good.
-
-```{julia}
-pred2_joint = predict(fpm_deep, testpop2; obstimes = 0:0.1:15)
-plotgrid(pred2_joint; observation = :yPD)
-plotgrid!(
-    pred2_truth,
-    ipred = false,
-    pred = (;
-        label = "Best possible pred",
-        color = :black,
-        linestyle = :dash,
-        linewidth = 2,
-    ),
-    observation = :yPD,
-)
-```
-
-# Conclusion
-
-DeepPumas enables flexible and nested composition of dynamical, statistical and machine learning modelling. It can be used to automatically identify missing dynamical elements in a data-driven way, and those elements can then be used to predict hetereogeneous outcomes across different individuals. Furthermore, the DeepPumas can correctly identify the relationship between baseline covariates and patient parameters to make longitudinal outcome predictions. With imperfect signal in our data, no model can perfectly predict the future, but the DeepPumas model here made the best possible predictions - matching those of the data-generating model.
-
