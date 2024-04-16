@@ -69,23 +69,25 @@ p_data = (;
   σ=0.1                         ## <-- tune the observational noise of the data here
 )
 dr = DosageRegimen(0.5, ii=8, addl=1)
-pop = synthetic_data(
-  datamodel,
-  dr,
-  p_data;
-  covariates=(;
-    R_eq=Gamma(50, 1 / (50)),
-    c1=Gamma(5, 2),
-    c2=Gamma(21, 1),
-    c3=Normal(),
-    c4=Normal(),
-    c5=Gamma(11, 1),
-    c6=Gamma(11, 1)
-  ),
-  nsubj=1020,
-  rng=StableRNG(123),
-  obstimes=0:2:24
-)
+
+rng = StableRNG(12)
+pop = map(1:1020) do i
+  _subj = Subject(;
+    id = i,
+    covariates=(;
+      R_eq=rand(rng, Gamma(50, 1 / (50))),
+      c1=rand(rng, Gamma(5, 2)),
+      c2=rand(rng, Gamma(21, 1)),
+      c3=rand(rng, Normal()),
+      c4=rand(rng, Normal()),
+      c5=rand(rng, Gamma(11, 1)),
+      c6=rand(rng, Gamma(11, 1))
+    ),
+    events = DosageRegimen(0.5, ii=8, addl=1)
+  )
+  sim = simobs(datamodel, _subj, p_data; obstimes = 0:2:24)
+  Subject(sim)
+end
 
 covariates_dist(pop)
 
@@ -163,10 +165,6 @@ fpm = fit(
   optim_options=(; iterations=300),
   constantcoef = (; Ω_nn = Diagonal(fill(0.1, 3)))
 )
-# Like any good TV-chef:
-# serialize(@__DIR__() * "/assets/deep_pumas_fpm.jls", fpm)
-# fpm = deserialize(@__DIR__() * "/assets/deep_pumas_fpm.jls")
-fpm.optim
 
 # The model has succeeded in discovering the dynamical model if the individual predictions
 # match the observations of the test population well.
@@ -267,7 +265,7 @@ mean(abs, residuals_large)
 
 # After augmenting the model, we could keep on fitting everything in concert. We'd start the
 # fit from our sequentially attained parameter values but this would still take time and for
-# larger models than this is might be unfeasible.
+# larger models than this it might be unfeasible.
 
 # However, even if we don't re-fit every parameter, it would be good to fit the Ω_nn such
 # that we don't overestimate the unaccounted for between-subject variability now that we've
