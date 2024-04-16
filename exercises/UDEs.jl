@@ -2,7 +2,6 @@ using DeepPumas
 using CairoMakie
 using StableRNGs
 set_theme!(deep_light())
-set_theme!(deep_dark())
 
 # 
 # TABLE OF CONTENTS
