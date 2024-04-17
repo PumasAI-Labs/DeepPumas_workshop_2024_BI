@@ -36,6 +36,7 @@ datamodel = @model begin
   end
 end
 
+# The covariate effect on the individual parameters are a bit crazy on purpose
 latexify(datamodel, :pre) |> render
 
 p_data = (;
@@ -67,7 +68,6 @@ end
 trainpop_small = pop[1:50]
 trainpop_large = pop[1:1000]
 testpop = pop[1001:end]
-# testpop = pop[1001:end]
 
 pred_datamodel = predict(datamodel, testpop, p_data; obstimes=0:0.01:8);
 plotgrid(pred_datamodel)
